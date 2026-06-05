@@ -43,6 +43,29 @@ fn encode_claim_call(
     d
 }
 
+/// 编码 claimFor(uint256,address,uint256,uint256,uint256,bytes) 调用数据
+/// selector: 0x91215604 — 与 claim 参数相同，但合约会从 gasReserve 报销 gas
+fn encode_claim_for_call(
+    onchain_packet_id: &str, recipient: &str, amount: &str,
+    nonce: &str, deadline: &str, signature_hex: &str,
+) -> String {
+    let sig = signature_hex.trim_start_matches("0x");
+    let sig_len = sig.len() / 2;
+    let padded_len = ((sig.len() + 63) / 64) * 64;
+
+    let mut d = String::from("0x91215604"); // claimFor(...) selector
+    d.push_str(&pad32(onchain_packet_id));     // packetId
+    d.push_str(&pad32(recipient));             // recipient
+    d.push_str(&dec_to_hex256(amount));        // amount
+    d.push_str(&dec_to_hex256(nonce));         // nonce
+    d.push_str(&dec_to_hex256(deadline));      // deadline
+    d.push_str(&u64_to_hex256(192));           // offset to bytes (6*32=192)
+    d.push_str(&u64_to_hex256(sig_len as u64));// length
+    // bytes 数据左对齐，右补零到 32 字节对齐
+    d.push_str(&format!("{:0<width$}", sig, width = padded_len));
+    d
+}
+
 // ===================== 自领: 准备交易数据 =====================
 
 /// POST /api/v1/claim/prepare
@@ -323,8 +346,8 @@ pub async fn proxy_claim(
         .await?;
     let sig_hex = hex::encode(&signature[..]);
 
-    // 4. 构造交易 calldata
-    let calldata = encode_claim_call(
+    // 4. 构造交易 calldata (使用 claimFor 以支持 gas 报销)
+    let calldata = encode_claim_for_call(
         &format!("0x{:x}", chain_pid), user_addr, &amount.to_string(),
         &nonce_num.to_string(), &deadline_num.to_string(),
         &format!("0x{}", sig_hex),

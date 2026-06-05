@@ -42,6 +42,8 @@ pub struct CreatePacketRequest {
     pub claim_mode: Option<String>,  // 默认 both
     pub start_time: Option<i64>,
     pub end_time: i64,
+    /// 代领 gas 准备金 (wei) — 如不传则由后端按 multiplier 估算
+    pub gas_reserve_wei: Option<String>,
 }
 
 /// 创建红包响应
@@ -51,6 +53,16 @@ pub struct CreatePacketResponse {
     pub transaction: TransactionData,
     pub share_url: String,
     pub expire_at: i64,
+    /// 预估总 gas 费 (wei) = gas_per_claim * head_count * gas_price * multiplier
+    pub estimated_gas_fee_wei: String,
+    /// 预估 gas 费 (ETH 单位，仅展示)
+    pub estimated_gas_fee_eth: String,
+    /// 当前 gas price (gwei)
+    pub gas_price_gwei: String,
+    /// gas 估算倍数
+    pub gas_estimate_multiplier: f64,
+    /// 建议 gas 准备金 (wei) = estimated_gas_fee_wei
+    pub suggested_gas_reserve_wei: String,
 }
 
 /// 待签名的交易数据
@@ -59,6 +71,9 @@ pub struct TransactionData {
     pub to: String,
     pub data: String,
     pub value: String,
+    /// Native: totalAmount + gasReserve 的总 value
+    /// ERC20: gasReserve (wei)
+    pub gas_reserve_wei: String,
 }
 
 /// 红包状态查询响应

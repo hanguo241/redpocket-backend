@@ -112,6 +112,7 @@ fn api_routes() -> Router<AppState> {
         .route("/claim/proxy", post(handlers::claim::proxy_claim))
         // 配置
         .route("/config/chains", get(handlers::config::get_chains))
+        .route("/config/gas", get(handlers::config::get_gas_config))
         // 管理
         .route("/admin/stats", get(handlers::admin::get_stats))
         // 管理后台 API (admin/)
@@ -125,6 +126,8 @@ fn api_routes() -> Router<AppState> {
         .route("/admin/chains", get(admin::chains::list))
         .route("/admin/chains/{chain}", axum::routing::put(admin::chains::update))
         .route("/admin/settings", get(admin::settings::get))
+        // gas 配置
+        .route("/admin/gas-config", get(admin::gas_config::get).put(admin::gas_config::update))
 }
 
 /// Health check
