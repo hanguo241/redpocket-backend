@@ -130,7 +130,9 @@ pub async fn prepare(
     let pkt = sqlx::query_as::<_, (
         String,String,String,i32,String,i64,i32,i32,Option<String>,
     )>(
-        r#"SELECT total_amount,remaining_amount,packet_type,head_count,sub_type,end_time,claimed_count,fee_bps,password_hash
+        r#"SELECT total_amount,remaining_amount,packet_type,head_count,sub_type,end_time,
+                   (SELECT COUNT(*) FROM claims WHERE packet_id=packets.id)::int as claimed_count,
+                   fee_bps,password_hash
            FROM packets WHERE id=$1 AND status='active'"#,
     )
     .bind(packet_id)
@@ -320,7 +322,9 @@ pub async fn proxy_claim(
     let pkt = sqlx::query_as::<_, (
         String,String,String,i32,String,i64,i32,i32,Option<String>,
     )>(
-        r#"SELECT total_amount,remaining_amount,packet_type,head_count,sub_type,end_time,claimed_count,fee_bps,password_hash
+        r#"SELECT total_amount,remaining_amount,packet_type,head_count,sub_type,end_time,
+                   (SELECT COUNT(*) FROM claims WHERE packet_id=packets.id)::int as claimed_count,
+                   fee_bps,password_hash
            FROM packets WHERE id=$1 AND status='active'"#,
     )
     .bind(packet_id)
