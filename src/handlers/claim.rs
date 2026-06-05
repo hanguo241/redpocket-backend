@@ -1,5 +1,6 @@
 use axum::{extract::State, Json};
 use ethers::core::types::{H160, U256};
+use rand::Rng;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -66,6 +67,47 @@ fn encode_claim_for_call(
     d
 }
 
+// ===================== 领取金额计算 =====================
+
+/// 计算单个领取人应得的金额
+///
+/// - average: 均分 remaining / unclaimed_count
+/// - random: 在 [avg×70%, avg×100%] 之间随机，最后一人领剩余
+fn calculate_claim_amount(
+    remaining: u128,
+    unclaimed_count: u32,
+    sub_type: &str,
+) -> u128 {
+    if unclaimed_count <= 1 {
+        // 只剩最后一人或只有一人 → 全拿剩余
+        return remaining;
+    }
+
+    match sub_type {
+        "random" => {
+            let avg = remaining / unclaimed_count as u128;
+            let min_ratio: u128 = 7000; // 70%
+            let max_ratio: u128 = 10000; // 100%
+            let min_amount = avg * min_ratio / 10000;
+            let max_amount = avg * max_ratio / 10000;
+
+            if min_amount >= max_amount || max_amount == 0 {
+                return avg;
+            }
+
+            // 在 [min_amount, max_amount] 间随机
+            let mut rng = rand::rng();
+            let range = max_amount - min_amount;
+            let random_add = rng.gen_range(0..=range);
+            min_amount + random_add
+        }
+        _ => {
+            // average: 均分
+            remaining / unclaimed_count as u128
+        }
+    }
+}
+
 // ===================== 自领: 准备交易数据 =====================
 
 /// POST /api/v1/claim/prepare
@@ -86,9 +128,9 @@ pub async fn prepare(
 
     // 1. 查红包
     let pkt = sqlx::query_as::<_, (
-        String,String,String,i32,String,i64,Option<String>,
+        String,String,String,i32,String,i64,i32,i32,Option<String>,
     )>(
-        r#"SELECT total_amount,remaining_amount,packet_type,head_count,sub_type,end_time,password_hash
+        r#"SELECT total_amount,remaining_amount,packet_type,head_count,sub_type,end_time,claimed_count,fee_bps,password_hash
            FROM packets WHERE id=$1 AND status='active'"#,
     )
     .bind(packet_id)
@@ -101,7 +143,7 @@ pub async fn prepare(
     }
 
     // 2. 校验口令
-    if let Some(ref hash) = pkt.6 {
+    if let Some(ref hash) = pkt.8 {
         if !hash.is_empty() {
             let input_hash = hex::encode(
                 ethers::core::utils::keccak256(proof_pw.unwrap_or("").as_bytes())
@@ -135,9 +177,18 @@ pub async fn prepare(
 
     // 4. 计算领取金额
     fn parse_wei(s: &str) -> u128 { s.parse().unwrap_or(0) }
-    let remaining = parse_wei(&pkt.1);
-    let head_count = pkt.3 as u128;
-    let amount = remaining / head_count;
+    let remaining_wei = parse_wei(&pkt.1);   // remaining_amount
+    let head_count = pkt.3;                  // 总人数
+    let sub_type = &pkt.4;                   // average | random
+    let claimed_count = pkt.6;               // 已领人数
+    let unclaimed = head_count - claimed_count;
+
+    if unclaimed <= 0 {
+        return Err(ApiError::BadRequest("Packet fully claimed".into()));
+    }
+
+    let amount = calculate_claim_amount(remaining_wei, unclaimed as u32, sub_type);
+    let amount_str = amount.to_string();
 
     let nonce_num = chrono::Utc::now().timestamp_millis() as u64;
     let deadline_num = (chrono::Utc::now().timestamp() + 1800) as u64;
@@ -170,7 +221,7 @@ pub async fn prepare(
 
     // 6. 构造交易数据
     let calldata = encode_claim_call(
-        &format!("0x{:x}", chain_pid), user_addr, &amount.to_string(),
+        &format!("0x{:x}", chain_pid), user_addr, &amount_str,
         &nonce_num.to_string(), &deadline_num.to_string(),
         &format!("0x{}", sig_hex),
     );
@@ -183,7 +234,7 @@ pub async fn prepare(
     )
     .bind(packet_id)
     .bind(user_addr)
-    .bind(amount.to_string())
+    .bind(&amount_str)
     .bind(nonce_num.to_string())
     .bind(&sig_hex)
     .execute(&state.db)
@@ -191,7 +242,7 @@ pub async fn prepare(
 
     Ok(Json(json!({
         "packet_id": packet_id,
-        "amount": amount.to_string(),
+        "amount": amount_str,
         "signature": format!("0x{}", sig_hex),
         "nonce": nonce_num,
         "deadline": deadline_num,
@@ -267,9 +318,9 @@ pub async fn proxy_claim(
 
     // 2. 查红包 + 链配置 + 计算金额 (复用 prepare 逻辑)
     let pkt = sqlx::query_as::<_, (
-        String,String,String,i32,String,i64,Option<String>,
+        String,String,String,i32,String,i64,i32,i32,Option<String>,
     )>(
-        r#"SELECT total_amount,remaining_amount,packet_type,head_count,sub_type,end_time,password_hash
+        r#"SELECT total_amount,remaining_amount,packet_type,head_count,sub_type,end_time,claimed_count,fee_bps,password_hash
            FROM packets WHERE id=$1 AND status='active'"#,
     )
     .bind(packet_id)
@@ -282,7 +333,7 @@ pub async fn proxy_claim(
     }
 
     // 口令校验
-    if let Some(ref hash) = pkt.6 {
+    if let Some(ref hash) = pkt.8 {
         if !hash.is_empty() {
             let input_hash = hex::encode(
                 ethers::core::utils::keccak256(proof_pw.unwrap_or("").as_bytes())
@@ -315,9 +366,19 @@ pub async fn proxy_claim(
     let chain_id = chain_cfg.0 as u64;
 
     fn parse_wei(s: &str) -> u128 { s.parse().unwrap_or(0) }
-    let remaining = parse_wei(&pkt.1);
-    let head_count = pkt.3 as u128;
-    let amount = remaining / head_count;
+    let remaining_wei = parse_wei(&pkt.1);   // remaining_amount
+    let head_count = pkt.3;                  // 总人数
+    let sub_type = &pkt.4;                   // average | random
+    let claimed_count = pkt.6;               // 已领人数
+    let unclaimed = head_count - claimed_count;
+
+    if unclaimed <= 0 {
+        return Err(ApiError::BadRequest("Packet fully claimed".into()));
+    }
+
+    let amount = calculate_claim_amount(remaining_wei, unclaimed as u32, sub_type);
+    let amount_str = amount.to_string();
+
     let nonce_num = chrono::Utc::now().timestamp_millis() as u64;
     let deadline_num = (chrono::Utc::now().timestamp() + 1800) as u64;
     let recipient: H160 = user_addr.parse().unwrap_or_default();
@@ -348,7 +409,7 @@ pub async fn proxy_claim(
 
     // 4. 构造交易 calldata (使用 claimFor 以支持 gas 报销)
     let calldata = encode_claim_for_call(
-        &format!("0x{:x}", chain_pid), user_addr, &amount.to_string(),
+        &format!("0x{:x}", chain_pid), user_addr, &amount_str,
         &nonce_num.to_string(), &deadline_num.to_string(),
         &format!("0x{}", sig_hex),
     );
@@ -406,7 +467,7 @@ pub async fn proxy_claim(
     )
     .bind(packet_id)
     .bind(user_addr)
-    .bind(amount.to_string())
+    .bind(&amount_str)
     .bind(nonce_num.to_string())
     .bind(&sig_hex)
     .bind(tx_hash)
@@ -419,6 +480,6 @@ pub async fn proxy_claim(
         "status": "confirmed",
         "tx_hash": tx_hash,
         "packet_id": packet_id,
-        "amount": amount.to_string(),
+        "amount": amount_str,
     })))
 }

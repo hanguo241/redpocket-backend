@@ -235,7 +235,7 @@ pub async fn prepare(
             match req.sub_type.as_str() { "random" => 1, _ => 0 },
             &signer_address,
             req.start_time.unwrap_or(0) as u64, req.end_time as u64,
-            7000, 10000, 100, &fee_collector,
+            7000, 10000, 20, &fee_collector,
             &gas_reserve_wei,
         )
     } else {
@@ -246,7 +246,7 @@ pub async fn prepare(
             match req.sub_type.as_str() { "random" => 1, _ => 0 },
             &signer_address,
             req.start_time.unwrap_or(0) as u64, req.end_time as u64,
-            7000, 10000, 100, &fee_collector,
+            7000, 10000, 20, &fee_collector,
             &gas_reserve_wei,
         )
     };
@@ -322,7 +322,7 @@ pub async fn create(
     let password_hash = body.get("password").and_then(|v| v.as_str())
         .map(|p| hex::encode(ethers::core::utils::keccak256(p.as_bytes())));
     let signer_address = body.get("signer_address").and_then(|v| v.as_str()).unwrap_or("");
-    let fee_bps = body.get("fee_bps").and_then(|v| v.as_i64()).unwrap_or(100) as i32;
+    let fee_bps = body.get("fee_bps").and_then(|v| v.as_i64()).unwrap_or(20) as i32;
     let fee_collector = body.get("fee_collector").and_then(|v| v.as_str()).unwrap_or(signer_address);
     let gas_reserve_wei = body.get("gas_reserve_wei").and_then(|v| v.as_str()).unwrap_or("0");
     let gas_estimate_multiplier = body.get("gas_estimate_multiplier").and_then(|v| v.as_f64()).unwrap_or(1.2);
