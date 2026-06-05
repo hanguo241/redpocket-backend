@@ -336,7 +336,7 @@ pub async fn create(
             start_time, end_time, signer_address, fee_bps, fee_collector, status,
             gas_reserve_wei, gas_estimate_multiplier
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,'active',$19,$20)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'active',$18,$19)
         "#,
     )
     .bind(packet_id)
