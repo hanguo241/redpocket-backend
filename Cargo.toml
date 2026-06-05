@@ -1,0 +1,47 @@
+[package]
+name = "redpacket-backend"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "redpacket-backend"
+path = "src/main.rs"
+
+[dependencies]
+# Web framework
+axum = { version = "0.8", features = ["macros"] }
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "uuid", "chrono", "json"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Crypto (EIP-712 signing)
+alloy-core = { version = "0.8", features = ["k256"] }
+k256 = { version = "0.13", features = ["ecdsa"] }
+sha3 = "0.10"
+tiny-keccak = "2"
+
+# Auth
+jsonwebtoken = "9"
+uuid = { version = "1", features = ["v4", "serde"] }
+hex = "0.4"
+
+# Helpers
+chrono = { version = "0.4", features = ["serde"] }
+dotenvy = "0.15"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2"
+reqwest = { version = "0.12", features = ["json"] }
+ethers-core = "2"  # for EIP-712 types
+ethers = "2"       # for wallet/signing
+rand = "0.9"
+hmac = "0.12"
+sha2 = "0.10"
+bcrypt = "0.16"
