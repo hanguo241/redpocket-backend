@@ -2,7 +2,7 @@ use axum::{extract::{Path, State}, Json};
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::error::{ApiError, ApiResult};
+use crate::error::ApiResult;
 use crate::AppState;
 
 /// GET /api/v1/admin/packets
@@ -10,17 +10,24 @@ pub async fn list(
     State(state): State<AppState>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let status_filter = params.get("status").map(|s| s.as_str()).unwrap_or("");
-    let chain_filter = params.get("chain").map(|s| s.as_str()).unwrap_or("");
+    use sqlx::QueryBuilder;
 
-    let mut sql = String::from(
+    let mut builder = QueryBuilder::new(
         "SELECT id, chain, creator_address, total_amount, status, created_at, end_time FROM packets WHERE 1=1"
     );
-    if !status_filter.is_empty() { sql.push_str(" AND status='"); sql.push_str(status_filter); sql.push('\''); }
-    if !chain_filter.is_empty() { sql.push_str(" AND chain='"); sql.push_str(chain_filter); sql.push('\''); }
-    sql.push_str(" ORDER BY created_at DESC LIMIT 100");
 
-    let rows = sqlx::query_as::<_, (Uuid, String, String, String, String, chrono::DateTime<chrono::Utc>, i64)>(&sql)
+    if let Some(status) = params.get("status") {
+        builder.push(" AND status = ");
+        builder.push_bind(status);
+    }
+    if let Some(chain) = params.get("chain") {
+        builder.push(" AND chain = ");
+        builder.push_bind(chain);
+    }
+    builder.push(" ORDER BY created_at DESC LIMIT 100");
+
+    let rows = builder
+        .build_query_as::<(Uuid, String, String, String, String, chrono::DateTime<chrono::Utc>, i64)>()
         .fetch_all(&state.db).await?;
 
     Ok(Json(json!({
@@ -43,7 +50,7 @@ pub async fn get(
     )
     .bind(id)
     .fetch_optional(&state.db).await?
-    .ok_or_else(|| ApiError::NotFound("Packet not found".into()))?;
+    .ok_or_else(|| crate::error::ApiError::NotFound("Packet not found".into()))?;
 
     let claims = sqlx::query_as::<_, (String, String, String, String, chrono::DateTime<chrono::Utc>)>(
         "SELECT recipient_address,amount,status,tx_hash,created_at FROM claims WHERE packet_id=$1 ORDER BY created_at DESC",

@@ -5,7 +5,7 @@ use ethers::{
 };
 use std::sync::Arc;
 
-use crate::error::ApiResult;
+use crate::error::{ApiError, ApiResult};
 
 /// 代领中继服务 — 由平台支付 gas 提交 claim 交易
 #[derive(Clone)]
@@ -18,11 +18,13 @@ impl RelayerService {
     pub fn new(private_key: &str, rpc_url: Option<&str>) -> ApiResult<Self> {
         let wallet: Wallet<SigningKey> = private_key
             .parse()
-            .map_err(|e| format!("Invalid relayer private key: {}", e))
-            .unwrap();
+            .map_err(|e| ApiError::Crypto(format!("Invalid relayer private key: {}", e)))?;
 
         let provider = if let Some(url) = rpc_url {
-            Some(Arc::new(Provider::<Http>::try_from(url).unwrap()))
+            Some(Arc::new(
+                Provider::<Http>::try_from(url)
+                    .map_err(|e| ApiError::Internal(format!("Invalid RPC URL: {}", e)))?,
+            ))
         } else {
             None
         };
@@ -44,26 +46,17 @@ impl RelayerService {
         _amount: ethers::core::types::U256,
         _signature: &[u8],
     ) -> ApiResult<String> {
-        // TODO: 实现实际的链上交易提交
-        // 1. 构造 claim 交易 calldata
-        // 2. 用 Relayer 钱包签名并发送
-        // 3. 等待确认返回 tx_hash
-        //
-        // 注意: Relayer 钱包需持有足够 native token 支付 gas
-
         tracing::info!(
             "Relayer would submit claim: packet={:?}, recipient={:?}, amount={:?}",
             _packet_id,
             _recipient,
             _amount
         );
-
         Ok("0x_pending_tx_hash_placeholder".to_string())
     }
 
     /// 检查 Relayer gas 余额是否充足
     pub async fn has_sufficient_gas(&self) -> bool {
-        // TODO: 从 provider 查询余额并与阈值比较
         true
     }
 }

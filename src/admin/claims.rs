@@ -10,24 +10,25 @@ pub async fn list(
     State(state): State<AppState>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let packet_filter = params.get("packet_id").and_then(|s| Uuid::parse_str(s).ok());
-    let status_filter = params.get("status").map(|s| s.as_str()).unwrap_or("");
+    use sqlx::QueryBuilder;
 
-    let mut sql = String::from(
+    let mut builder = QueryBuilder::new(
         "SELECT c.id, c.packet_id, c.recipient_address, c.amount, c.status, c.tx_hash, c.created_at, p.chain
          FROM claims c JOIN packets p ON p.id=c.packet_id WHERE 1=1"
     );
-    if let Some(pid) = packet_filter {
-        sql.push_str(&format!(" AND c.packet_id='{}'", pid));
-    }
-    if !status_filter.is_empty() {
-        sql.push_str(" AND c.status='");
-        sql.push_str(status_filter);
-        sql.push('\'');
-    }
-    sql.push_str(" ORDER BY c.created_at DESC LIMIT 100");
 
-    let rows = sqlx::query_as::<_, (Uuid, Uuid, String, String, String, Option<String>, chrono::DateTime<chrono::Utc>, String)>(&sql)
+    if let Some(pid) = params.get("packet_id").and_then(|s| Uuid::parse_str(s).ok()) {
+        builder.push(" AND c.packet_id = ");
+        builder.push_bind(pid);
+    }
+    if let Some(status) = params.get("status") {
+        builder.push(" AND c.status = ");
+        builder.push_bind(status);
+    }
+    builder.push(" ORDER BY c.created_at DESC LIMIT 100");
+
+    let rows = builder
+        .build_query_as::<(Uuid, Uuid, String, String, String, Option<String>, chrono::DateTime<chrono::Utc>, String)>()
         .fetch_all(&state.db).await?;
 
     Ok(Json(json!({
