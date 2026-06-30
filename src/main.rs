@@ -12,6 +12,7 @@ mod services;
 use std::sync::Arc;
 
 use axum::{
+    middleware as axum_middleware,
     routing::{get, post},
     Router,
 };
@@ -54,7 +55,7 @@ async fn main() {
     // 构建路由
     let app = Router::new()
         .route("/health", get(health_check))
-        .nest("/api/v1", api_routes())
+        .nest("/api/v1", api_routes(state.clone()))
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
         .with_state(state);
@@ -72,29 +73,53 @@ async fn main() {
 }
 
 /// API v1 路由组
-fn api_routes() -> Router<AppState> {
-    Router::new()
-        .route("/project/register", post(handlers::project::register))
+fn api_routes(state: AppState) -> Router<AppState> {
+    let public_packet_routes = Router::new()
+        // 官网自用演示路径：用户在官方 website 发红包，不需要商户 AppSecret
+        .route("/packet/prepare", post(handlers::packet::prepare))
+        .route("/packet/create", post(handlers::packet::create))
+        .route("/packet/{id}/status", get(handlers::packet::get_status));
+
+    let merchant_routes = Router::new()
         .route("/packet/prepare", post(handlers::packet::prepare))
         .route("/packet/create", post(handlers::packet::create))
         .route("/packet/{id}/status", get(handlers::packet::get_status))
+        .route_layer(axum_middleware::from_fn_with_state(
+            state.clone(),
+            middleware::auth::require_merchant,
+        ));
+
+    let admin_public_routes = Router::new()
+        .route("/login", post(admin::auth::login));
+
+    let admin_protected_routes = Router::new()
+        .route("/stats", get(handlers::admin::get_stats))
+        .route("/dashboard", get(admin::dashboard::dashboard))
+        .route("/projects", get(admin::projects::list).post(admin::projects::create))
+        .route("/projects/{id}", axum::routing::put(admin::projects::update))
+        .route("/packets", get(admin::packets::list))
+        .route("/packets/{id}", get(admin::packets::get))
+        .route("/claims", get(admin::claims::list))
+        .route("/chains", get(admin::chains::list))
+        .route("/chains/{chain}", axum::routing::put(admin::chains::update))
+        .route("/settings", get(admin::settings::get))
+        .route("/gas-config", get(admin::gas_config::get).put(admin::gas_config::update))
+        .route("/fees/withdraw-transaction", post(admin::fees::prepare_withdraw_transaction))
+        .route_layer(axum_middleware::from_fn_with_state(
+            state,
+            middleware::auth::require_admin,
+        ));
+
+    Router::new()
+        .route("/project/register", post(handlers::project::register))
         .route("/claim/prepare", post(handlers::claim::prepare))
         .route("/claim/confirm", post(handlers::claim::confirm))
         .route("/claim/proxy", post(handlers::claim::proxy_claim))
         .route("/config/chains", get(handlers::config::get_chains))
         .route("/config/gas", get(handlers::config::get_gas_config))
-        .route("/admin/stats", get(handlers::admin::get_stats))
-        .route("/admin/login", post(admin::auth::login))
-        .route("/admin/dashboard", get(admin::dashboard::dashboard))
-        .route("/admin/projects", get(admin::projects::list).post(admin::projects::create))
-        .route("/admin/projects/{id}", axum::routing::put(admin::projects::update))
-        .route("/admin/packets", get(admin::packets::list))
-        .route("/admin/packets/{id}", get(admin::packets::get))
-        .route("/admin/claims", get(admin::claims::list))
-        .route("/admin/chains", get(admin::chains::list))
-        .route("/admin/chains/{chain}", axum::routing::put(admin::chains::update))
-        .route("/admin/settings", get(admin::settings::get))
-        .route("/admin/gas-config", get(admin::gas_config::get).put(admin::gas_config::update))
+        .merge(public_packet_routes)
+        .nest("/merchant", merchant_routes)
+        .nest("/admin", admin_public_routes.merge(admin_protected_routes))
 }
 
 /// Health check

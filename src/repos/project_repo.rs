@@ -3,6 +3,11 @@ use uuid::Uuid;
 
 use crate::error::ApiResult;
 
+pub struct ProjectAuthRow {
+    pub id: Uuid,
+    pub app_secret: String,
+}
+
 #[derive(Clone)]
 pub struct ProjectRepo {
     db: PgPool,
@@ -40,5 +45,17 @@ impl ProjectRepo {
         .execute(&self.db)
         .await?;
         Ok(())
+    }
+
+    /// 按 AppKey 查询 API 鉴权信息
+    pub async fn find_auth_by_app_key(&self, app_key: &str) -> ApiResult<Option<ProjectAuthRow>> {
+        let row = sqlx::query_as::<_, (Uuid, String)>(
+            "SELECT id, app_secret FROM projects WHERE app_key=$1",
+        )
+        .bind(app_key)
+        .fetch_optional(&self.db)
+        .await?;
+
+        Ok(row.map(|(id, app_secret)| ProjectAuthRow { id, app_secret }))
     }
 }

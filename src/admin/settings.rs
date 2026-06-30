@@ -12,7 +12,7 @@ pub async fn get(State(state): State<AppState>) -> ApiResult<Json<serde_json::Va
     Ok(Json(json!({
         "signer_address": signer,
         "relayer_address": relayer,
-        "default_fee_bps": 100,
+        "default_fee_bps": 20,
         "share_url_host": state.config.share_url_host,
     })))
 }

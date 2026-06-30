@@ -12,19 +12,21 @@ pub struct Packet {
     pub contract_address: String,
     pub creator_address: String,
     pub token_address: String,
+    pub gross_amount: String,
     pub total_amount: String,
     pub remaining_amount: String,
+    pub platform_fee_wei: String,
     pub head_count: i32,
-    pub packet_type: String,       // normal | password | condition
-    pub sub_type: String,          // average | random
-    pub claim_mode: String,        // self | proxy | both
+    pub packet_type: String, // normal | password | condition
+    pub sub_type: String,    // average | random
+    pub claim_mode: String,  // self | proxy | both
     pub password_hash: Option<String>,
     pub start_time: i64,
     pub end_time: i64,
     pub signer_address: String,
     pub fee_bps: i32,
     pub fee_collector: String,
-    pub status: String,            // active | completed | expired | refunded
+    pub status: String, // active | completed | expired | refunded
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -39,7 +41,7 @@ pub struct CreatePacketRequest {
     pub packet_type: String,
     pub sub_type: String,
     pub password: Option<String>,
-    pub claim_mode: Option<String>,  // 默认 both
+    pub claim_mode: Option<String>, // 默认 both
     pub start_time: Option<i64>,
     pub end_time: i64,
     /// 代领 gas 准备金 (wei) — 如不传则由后端按 multiplier 估算
@@ -53,6 +55,14 @@ pub struct CreatePacketResponse {
     pub transaction: TransactionData,
     pub share_url: String,
     pub expire_at: i64,
+    /// 平台手续费基点，默认 20 = 0.2% / 千分之二
+    pub fee_bps: i32,
+    /// 创建红包时计提的平台手续费
+    pub platform_fee_wei: String,
+    /// 扣除平台手续费后的可领取红包池
+    pub claim_pool_wei: String,
+    /// 未领取本金可退款时间
+    pub refund_available_at: i64,
     /// 预估总 gas 费 (wei) = gas_per_claim * head_count * gas_price * multiplier
     pub estimated_gas_fee_wei: String,
     /// 预估 gas 费 (ETH 单位，仅展示)
@@ -81,10 +91,13 @@ pub struct TransactionData {
 pub struct PacketStatusResponse {
     pub packet_id: Uuid,
     pub status: String,
+    pub gross_amount: String,
     pub total_amount: String,
+    pub platform_fee_wei: String,
     pub claimed_amount: String,
     pub remaining_amount: String,
     pub claimed_count: i32,
     pub head_count: i32,
     pub claim_mode: String,
+    pub refund_available_at: i64,
 }

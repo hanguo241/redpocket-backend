@@ -6,7 +6,9 @@ use crate::error::ApiResult;
 /// 包查询结果：用于 get_status
 pub struct PacketStatusRow {
     pub status: String,
+    pub gross_amount: String,
     pub total_amount: String,
+    pub platform_fee_wei: String,
     pub claimed_amount: String,
     pub claimed_count: i32,
     pub head_count: i32,
@@ -14,6 +16,7 @@ pub struct PacketStatusRow {
     pub remaining_amount: String,
     pub gas_reserve_wei: String,
     pub gas_used_wei: String,
+    pub refund_available_at: i64,
 }
 
 #[derive(Clone)]
@@ -30,11 +33,14 @@ impl PacketRepo {
     pub async fn create(
         &self,
         id: Uuid,
+        project_id: Option<Uuid>,
         chain: &str,
         contract_addr: &str,
         creator: &str,
         token: &str,
-        total_amount: &str,
+        gross_amount: &str,
+        claim_pool_amount: &str,
+        platform_fee_wei: &str,
         head_count: i32,
         packet_type: &str,
         sub_type: &str,
@@ -51,22 +57,25 @@ impl PacketRepo {
         sqlx::query(
             r#"
             INSERT INTO packets (
-                id, chain, contract_address, creator_address, token_address,
-                total_amount, remaining_amount, head_count,
+                id, project_id, chain, contract_address, creator_address, token_address,
+                gross_amount, total_amount, remaining_amount, platform_fee_wei, head_count,
                 packet_type, sub_type, claim_mode, password_hash,
                 start_time, end_time, signer_address, fee_bps, fee_collector, status,
                 gas_reserve_wei, gas_estimate_multiplier
             )
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'active',$18,$19)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,'active',$21,$22)
             "#,
         )
         .bind(id)
+        .bind(project_id)
         .bind(chain)
         .bind(contract_addr)
         .bind(creator)
         .bind(token)
-        .bind(total_amount)
-        .bind(total_amount)
+        .bind(gross_amount)
+        .bind(claim_pool_amount)
+        .bind(claim_pool_amount)
+        .bind(platform_fee_wei)
         .bind(head_count)
         .bind(packet_type)
         .bind(sub_type)
@@ -87,14 +96,18 @@ impl PacketRepo {
     /// 查询红包状态
     pub async fn get_status(&self, id: Uuid) -> ApiResult<Option<PacketStatusRow>> {
         let row = sqlx::query_as::<_, (
-            String, String, String, i32, i32, String, String, String, String,
+            String, String, String, String, String, i32, i32, String, String, String, String, i64,
         )>(
             r#"
-            SELECT status, total_amount,
-                   (SELECT COALESCE(SUM(CAST(amount AS numeric)),0)::text FROM claims WHERE packet_id=$1) as claimed_amount,
-                   (SELECT COUNT(*) FROM claims WHERE packet_id=$1)::int as claimed_count,
+            SELECT status,
+                   COALESCE(NULLIF(gross_amount, ''), total_amount) as gross_amount,
+                   total_amount,
+                   platform_fee_wei,
+                   (SELECT COALESCE(SUM(CAST(amount AS numeric)),0)::text FROM claims WHERE packet_id=$1 AND status='confirmed') as claimed_amount,
+                   (SELECT COUNT(*) FROM claims WHERE packet_id=$1 AND status='confirmed')::int as claimed_count,
                    head_count, claim_mode, remaining_amount::text,
-                   gas_reserve_wei, gas_used_wei
+                   gas_reserve_wei, gas_used_wei,
+                   end_time as refund_available_at
             FROM packets WHERE id=$1
             "#,
         )
@@ -104,26 +117,28 @@ impl PacketRepo {
 
         Ok(row.map(|r| PacketStatusRow {
             status: r.0,
-            total_amount: r.1,
-            claimed_amount: r.2,
-            claimed_count: r.3,
-            head_count: r.4,
-            claim_mode: r.5,
-            remaining_amount: r.6,
-            gas_reserve_wei: r.7,
-            gas_used_wei: r.8,
+            gross_amount: r.1,
+            total_amount: r.2,
+            platform_fee_wei: r.3,
+            claimed_amount: r.4,
+            claimed_count: r.5,
+            head_count: r.6,
+            claim_mode: r.7,
+            remaining_amount: r.8,
+            gas_reserve_wei: r.9,
+            gas_used_wei: r.10,
+            refund_available_at: r.11,
         }))
     }
 
     /// 获取 onchain_packet_id
     pub async fn find_onchain_id(&self, id: Uuid) -> ApiResult<Option<i64>> {
-        let val: Option<i64> = sqlx::query_scalar(
-            "SELECT onchain_packet_id FROM packets WHERE id=$1",
-        )
-        .bind(id)
-        .fetch_optional(&self.db)
-        .await?
-        .unwrap_or(None);
+        let val: Option<i64> =
+            sqlx::query_scalar("SELECT onchain_packet_id FROM packets WHERE id=$1")
+                .bind(id)
+                .fetch_optional(&self.db)
+                .await?
+                .unwrap_or(None);
         Ok(val)
     }
 
@@ -145,7 +160,7 @@ impl PacketRepo {
             r#"
             SELECT total_amount, remaining_amount, packet_type, head_count,
                    sub_type, end_time,
-                   (SELECT COUNT(*) FROM claims WHERE packet_id=packets.id)::int as claimed_count,
+                   (SELECT COUNT(*) FROM claims WHERE packet_id=packets.id AND status='confirmed')::int as claimed_count,
                    fee_bps, password_hash
             FROM packets WHERE id=$1 AND status='active'
             "#,

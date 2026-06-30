@@ -17,11 +17,7 @@ use crate::services::signer::SignerService;
 ///
 /// - average: 均分 remaining / unclaimed_count
 /// - random: 在 [avg×70%, avg×100%] 之间随机，最后一人领剩余
-pub fn calculate_claim_amount(
-    remaining: u128,
-    unclaimed_count: u32,
-    sub_type: &str,
-) -> u128 {
+pub fn calculate_claim_amount(remaining: u128, unclaimed_count: u32, sub_type: &str) -> u128 {
     if unclaimed_count <= 1 {
         return remaining;
     }
@@ -64,7 +60,13 @@ impl ClaimService {
         signer: Arc<SignerService>,
         relayer: Arc<RelayerService>,
     ) -> Self {
-        Self { claim_repo, packet_repo, config_repo, signer, relayer }
+        Self {
+            claim_repo,
+            packet_repo,
+            config_repo,
+            signer,
+            relayer,
+        }
     }
 
     /// 准备领取：校验 + 金额计算 + 签名 + 构造 calldata
@@ -74,7 +76,10 @@ impl ClaimService {
         user_addr: &str,
         proof_pw: Option<&str>,
     ) -> ApiResult<serde_json::Value> {
-        let pkt = self.packet_repo.find_claim_info(packet_id).await?
+        let pkt = self
+            .packet_repo
+            .find_claim_info(packet_id)
+            .await?
             .ok_or_else(|| ApiError::NotFound("Packet not found or not active".into()))?;
 
         if pkt.end_time <= chrono::Utc::now().timestamp() {
@@ -84,9 +89,9 @@ impl ClaimService {
         // 校验口令
         if let Some(ref hash) = pkt.password_hash {
             if !hash.is_empty() {
-                let input_hash = hex::encode(
-                    ethers::core::utils::keccak256(proof_pw.unwrap_or("").as_bytes())
-                );
+                let input_hash = hex::encode(ethers::core::utils::keccak256(
+                    proof_pw.unwrap_or("").as_bytes(),
+                ));
                 if input_hash != *hash {
                     return Err(ApiError::BadRequest("Invalid password".into()));
                 }
@@ -94,15 +99,26 @@ impl ClaimService {
         }
 
         // 查链配置
-        let (chain, contract_addr_str) = self.config_repo.find_by_packet_id(packet_id).await?
+        let (_chain, contract_addr_str) = self
+            .config_repo
+            .find_by_packet_id(packet_id)
+            .await?
             .ok_or_else(|| ApiError::BadRequest("Chain not configured".into()))?;
 
-        let contract_addr: H160 = contract_addr_str.parse().unwrap_or_default();
-        let chain_id = self.config_repo.find_chain_id_by_contract(&contract_addr_str).await?
-            .ok_or_else(|| ApiError::BadRequest("Chain config not found".into()))? as u64;
+        let contract_addr: H160 = contract_addr_str
+            .parse()
+            .map_err(|_| ApiError::BadRequest("Invalid contract address".into()))?;
+        let chain_id = self
+            .config_repo
+            .find_chain_id_by_contract(&contract_addr_str)
+            .await?
+            .ok_or_else(|| ApiError::BadRequest("Chain config not found".into()))?
+            as u64;
 
         // 计算金额
-        fn parse_wei(s: &str) -> u128 { s.parse().unwrap_or(0) }
+        fn parse_wei(s: &str) -> u128 {
+            s.parse().unwrap_or(0)
+        }
         let remaining_wei = parse_wei(&pkt.remaining_amount);
         let unclaimed = pkt.head_count - pkt.claimed_count;
 
@@ -115,16 +131,20 @@ impl ClaimService {
 
         let nonce_num = chrono::Utc::now().timestamp_millis() as u64;
         let deadline_num = (chrono::Utc::now().timestamp() + 1800) as u64;
-        let recipient: H160 = user_addr.parse().unwrap_or_default();
+        let recipient: H160 = user_addr
+            .parse()
+            .map_err(|_| ApiError::BadRequest("Invalid user address".into()))?;
 
         // 获取 onchain_packet_id
         let onchain_id = self.packet_repo.find_onchain_id(packet_id).await?;
-        let chain_pid = onchain_id.filter(|&v| v > 0).map(|v| v as u64).unwrap_or(1);
-
-        // TODO: 当 onchain_id 不存在时返回错误而非回退到 1
+        let chain_pid = onchain_id
+            .filter(|&v| v > 0)
+            .map(|v| v as u64)
+            .ok_or_else(|| ApiError::BadRequest("Packet transaction is not indexed yet".into()))?;
 
         // 签发签名
-        let signature = self.signer
+        let signature = self
+            .signer
             .sign_claim(
                 U256::from(chain_pid),
                 recipient,
@@ -139,16 +159,25 @@ impl ClaimService {
 
         // 构造 calldata
         let calldata = abi::encode_claim(
-            &format!("0x{:x}", chain_pid), user_addr, &amount_str,
-            &nonce_num.to_string(), &deadline_num.to_string(),
+            &format!("0x{:x}", chain_pid),
+            user_addr,
+            &amount_str,
+            &nonce_num.to_string(),
+            &deadline_num.to_string(),
             &format!("0x{}", sig_hex),
         );
 
         // 记录 pending
-        self.claim_repo.create_pending(
-            packet_id, user_addr, &amount_str,
-            &nonce_num.to_string(), &sig_hex, "self",
-        ).await?;
+        self.claim_repo
+            .create_pending(
+                packet_id,
+                user_addr,
+                &amount_str,
+                &nonce_num.to_string(),
+                &sig_hex,
+                "self",
+            )
+            .await?;
 
         Ok(json!({
             "packet_id": packet_id,
@@ -171,7 +200,9 @@ impl ClaimService {
         recipient: &str,
         tx_hash: &str,
     ) -> ApiResult<serde_json::Value> {
-        self.claim_repo.confirm(packet_id, recipient, tx_hash).await?;
+        self.claim_repo
+            .confirm(packet_id, recipient, tx_hash)
+            .await?;
         Ok(json!({"status": "confirmed", "tx_hash": tx_hash}))
     }
 
@@ -184,9 +215,11 @@ impl ClaimService {
         proof_pw: Option<&str>,
     ) -> ApiResult<serde_json::Value> {
         // 1. 验证用户授权签名
-        let auth_msg = format!("\x19Ethereum Signed Message:\n{}RedPacket: authorize claim {}",
+        let auth_msg = format!(
+            "\x19Ethereum Signed Message:\n{}RedPacket: authorize claim {}",
             (27 + packet_id.to_string().len()), // ← 修复 blocker: 27 而非 32
-            packet_id);
+            packet_id
+        );
         let auth_hash = ethers::core::utils::keccak256(auth_msg.as_bytes());
         let sig_bytes = hex::decode(user_sig.trim_start_matches("0x"))
             .map_err(|_| ApiError::BadRequest("Invalid signature format".into()))?;
@@ -204,7 +237,10 @@ impl ClaimService {
         }
 
         // 2. 查红包
-        let pkt = self.packet_repo.find_claim_info(packet_id).await?
+        let pkt = self
+            .packet_repo
+            .find_claim_info(packet_id)
+            .await?
             .ok_or_else(|| ApiError::NotFound("Packet not found or not active".into()))?;
 
         if pkt.end_time <= chrono::Utc::now().timestamp() {
@@ -214,9 +250,9 @@ impl ClaimService {
         // 口令校验
         if let Some(ref hash) = pkt.password_hash {
             if !hash.is_empty() {
-                let input_hash = hex::encode(
-                    ethers::core::utils::keccak256(proof_pw.unwrap_or("").as_bytes())
-                );
+                let input_hash = hex::encode(ethers::core::utils::keccak256(
+                    proof_pw.unwrap_or("").as_bytes(),
+                ));
                 if input_hash != *hash {
                     return Err(ApiError::BadRequest("Invalid password".into()));
                 }
@@ -224,15 +260,26 @@ impl ClaimService {
         }
 
         // 3. 查链配置
-        let (chain, contract_addr_str) = self.config_repo.find_by_packet_id(packet_id).await?
+        let (_chain, contract_addr_str) = self
+            .config_repo
+            .find_by_packet_id(packet_id)
+            .await?
             .ok_or_else(|| ApiError::BadRequest("Chain not configured".into()))?;
 
-        let contract_addr: H160 = contract_addr_str.parse().unwrap_or_default();
-        let chain_id = self.config_repo.find_chain_id_by_contract(&contract_addr_str).await?
-            .ok_or_else(|| ApiError::BadRequest("Chain config not found".into()))? as u64;
+        let contract_addr: H160 = contract_addr_str
+            .parse()
+            .map_err(|_| ApiError::BadRequest("Invalid contract address".into()))?;
+        let chain_id = self
+            .config_repo
+            .find_chain_id_by_contract(&contract_addr_str)
+            .await?
+            .ok_or_else(|| ApiError::BadRequest("Chain config not found".into()))?
+            as u64;
 
         // 4. 计算金额
-        fn parse_wei(s: &str) -> u128 { s.parse().unwrap_or(0) }
+        fn parse_wei(s: &str) -> u128 {
+            s.parse().unwrap_or(0)
+        }
         let remaining_wei = parse_wei(&pkt.remaining_amount);
         let unclaimed = pkt.head_count - pkt.claimed_count;
 
@@ -245,13 +292,19 @@ impl ClaimService {
 
         let nonce_num = chrono::Utc::now().timestamp_millis() as u64;
         let deadline_num = (chrono::Utc::now().timestamp() + 1800) as u64;
-        let recipient: H160 = user_addr.parse().unwrap_or_default();
+        let recipient: H160 = user_addr
+            .parse()
+            .map_err(|_| ApiError::BadRequest("Invalid user address".into()))?;
 
         let onchain_id = self.packet_repo.find_onchain_id(packet_id).await?;
-        let chain_pid = onchain_id.filter(|&v| v > 0).map(|v| v as u64).unwrap_or(1);
+        let chain_pid = onchain_id
+            .filter(|&v| v > 0)
+            .map(|v| v as u64)
+            .ok_or_else(|| ApiError::BadRequest("Packet transaction is not indexed yet".into()))?;
 
         // 5. 签发签名
-        let signature = self.signer
+        let signature = self
+            .signer
             .sign_claim(
                 U256::from(chain_pid),
                 recipient,
@@ -266,19 +319,32 @@ impl ClaimService {
 
         // 6. 构造 claimFor calldata
         let calldata = abi::encode_claim_for(
-            &format!("0x{:x}", chain_pid), user_addr, &amount_str,
-            &nonce_num.to_string(), &deadline_num.to_string(),
+            &format!("0x{:x}", chain_pid),
+            user_addr,
+            &amount_str,
+            &nonce_num.to_string(),
+            &deadline_num.to_string(),
             &format!("0x{}", sig_hex),
         );
 
         // 7. 获取 RPC URL
-        let rpc_url = self.config_repo.find_rpc_by_contract(&contract_addr_str).await?
+        let rpc_url = self
+            .config_repo
+            .find_rpc_by_contract(&contract_addr_str)
+            .await?
             .ok_or_else(|| ApiError::Internal("RPC URL not configured".into()))?;
 
         // 8. 用 Relayer 钱包广播
         let relayer_addr = format!("{:?}", self.relayer.address());
         let client = reqwest::Client::new();
-        let to_addr = format!("0x{}", contract_addr.to_fixed_bytes().iter().map(|b| format!("{:02x}", b)).collect::<String>());
+        let to_addr = format!(
+            "0x{}",
+            contract_addr
+                .to_fixed_bytes()
+                .iter()
+                .map(|b| format!("{:02x}", b))
+                .collect::<String>()
+        );
 
         let rpc_resp = client
             .post(&rpc_url)
@@ -297,25 +363,43 @@ impl ClaimService {
             .await
             .map_err(|e| ApiError::Internal(format!("RPC call failed: {}", e)))?;
 
-        let rpc_body: serde_json::Value = rpc_resp.json().await
+        let rpc_body: serde_json::Value = rpc_resp
+            .json()
+            .await
             .map_err(|e| ApiError::Internal(format!("RPC parse error: {}", e)))?;
 
         if let Some(err) = rpc_body.get("error") {
             return Err(ApiError::Internal(format!(
-                "RPC error: {}", err.get("message").and_then(|m| m.as_str()).unwrap_or("unknown")
+                "RPC error: {}",
+                err.get("message")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("unknown")
             )));
         }
 
-        let tx_hash = rpc_body.get("result").and_then(|r| r.as_str())
+        let tx_hash = rpc_body
+            .get("result")
+            .and_then(|r| r.as_str())
             .ok_or_else(|| ApiError::Internal("RPC did not return tx_hash".into()))?;
 
         // 9. 记录
-        self.claim_repo.confirm_proxy(
-            packet_id, user_addr, &amount_str,
-            &nonce_num.to_string(), &sig_hex, tx_hash,
-        ).await?;
+        self.claim_repo
+            .confirm_proxy(
+                packet_id,
+                user_addr,
+                &amount_str,
+                &nonce_num.to_string(),
+                &sig_hex,
+                tx_hash,
+            )
+            .await?;
 
-        tracing::info!("Proxy claim: packet={} user={} tx={}", packet_id, user_addr, tx_hash);
+        tracing::info!(
+            "Proxy claim: packet={} user={} tx={}",
+            packet_id,
+            user_addr,
+            tx_hash
+        );
 
         Ok(json!({
             "status": "confirmed",

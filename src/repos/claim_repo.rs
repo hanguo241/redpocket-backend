@@ -44,8 +44,23 @@ impl ClaimRepo {
     /// 确认 claim
     pub async fn confirm(&self, packet_id: Uuid, recipient: &str, tx_hash: &str) -> ApiResult<()> {
         sqlx::query(
-            r#"UPDATE claims SET status='confirmed', tx_hash=$1
-               WHERE packet_id=$2 AND recipient_address=$3"#,
+            r#"
+            WITH updated AS (
+                UPDATE claims
+                SET status='confirmed', tx_hash=$1
+                WHERE packet_id=$2 AND recipient_address=$3 AND status <> 'confirmed'
+                RETURNING packet_id, amount
+            )
+            UPDATE packets p
+            SET remaining_amount = GREATEST(CAST(p.remaining_amount AS numeric) - CAST(updated.amount AS numeric), 0)::text,
+                status = CASE
+                    WHEN GREATEST(CAST(p.remaining_amount AS numeric) - CAST(updated.amount AS numeric), 0) = 0 THEN 'completed'
+                    ELSE p.status
+                END,
+                updated_at = NOW()
+            FROM updated
+            WHERE p.id = updated.packet_id
+            "#,
         )
         .bind(tx_hash)
         .bind(packet_id)
@@ -67,9 +82,23 @@ impl ClaimRepo {
     ) -> ApiResult<()> {
         sqlx::query(
             r#"
-            INSERT INTO claims (packet_id,recipient_address,amount,fee,nonce,signature,claim_type,status,tx_hash)
-            VALUES($1,$2,$3,'0',$4,$5,'proxy','confirmed',$6)
-            ON CONFLICT (packet_id, recipient_address) DO UPDATE SET status='confirmed', tx_hash=$6
+            WITH updated AS (
+                INSERT INTO claims (packet_id,recipient_address,amount,fee,nonce,signature,claim_type,status,tx_hash)
+                VALUES($1,$2,$3,'0',$4,$5,'proxy','confirmed',$6)
+                ON CONFLICT (packet_id, recipient_address) DO UPDATE
+                SET status='confirmed', tx_hash=$6, amount=$3, nonce=$4, signature=$5, claim_type='proxy'
+                WHERE claims.status <> 'confirmed'
+                RETURNING packet_id, amount
+            )
+            UPDATE packets p
+            SET remaining_amount = GREATEST(CAST(p.remaining_amount AS numeric) - CAST(updated.amount AS numeric), 0)::text,
+                status = CASE
+                    WHEN GREATEST(CAST(p.remaining_amount AS numeric) - CAST(updated.amount AS numeric), 0) = 0 THEN 'completed'
+                    ELSE p.status
+                END,
+                updated_at = NOW()
+            FROM updated
+            WHERE p.id = updated.packet_id
             "#,
         )
         .bind(packet_id)
