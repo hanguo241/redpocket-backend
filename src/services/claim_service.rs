@@ -36,7 +36,7 @@ pub fn calculate_claim_amount(remaining: u128, unclaimed_count: u32, sub_type: &
 
             let mut rng = rand::rng();
             let range = max_amount - min_amount;
-            let random_add = rng.gen_range(0..=range);
+            let random_add = rng.random_range(0..=range);
             min_amount + random_add
         }
         _ => remaining / unclaimed_count as u128,
@@ -116,10 +116,12 @@ impl ClaimService {
             as u64;
 
         // 计算金额
-        fn parse_wei(s: &str) -> u128 {
-            s.parse().unwrap_or(0)
+        fn parse_wei(s: &str) -> ApiResult<u128> {
+            s.parse().map_err(|_| ApiError::Internal(
+                format!("Invalid wei amount in database: {}", s)
+            ))
         }
-        let remaining_wei = parse_wei(&pkt.remaining_amount);
+        let remaining_wei = parse_wei(&pkt.remaining_amount)?;
         let unclaimed = pkt.head_count - pkt.claimed_count;
 
         if unclaimed <= 0 {
@@ -277,10 +279,12 @@ impl ClaimService {
             as u64;
 
         // 4. 计算金额
-        fn parse_wei(s: &str) -> u128 {
-            s.parse().unwrap_or(0)
+        fn parse_wei(s: &str) -> ApiResult<u128> {
+            s.parse().map_err(|_| ApiError::Internal(
+                format!("Invalid wei amount in database: {}", s)
+            ))
         }
-        let remaining_wei = parse_wei(&pkt.remaining_amount);
+        let remaining_wei = parse_wei(&pkt.remaining_amount)?;
         let unclaimed = pkt.head_count - pkt.claimed_count;
 
         if unclaimed <= 0 {
@@ -335,9 +339,7 @@ impl ClaimService {
             .ok_or_else(|| ApiError::Internal("RPC URL not configured".into()))?;
 
         // 8. 用 Relayer 钱包广播
-        let relayer_addr = format!("{:?}", self.relayer.address());
-        let client = reqwest::Client::new();
-        let to_addr = format!(
+        let contract_addr_hex = format!(
             "0x{}",
             contract_addr
                 .to_fixed_bytes()
@@ -345,42 +347,12 @@ impl ClaimService {
                 .map(|b| format!("{:02x}", b))
                 .collect::<String>()
         );
-
-        let rpc_resp = client
-            .post(&rpc_url)
-            .json(&json!({
-                "jsonrpc": "2.0",
-                "method": "eth_sendTransaction",
-                "params": [{
-                    "from": relayer_addr,
-                    "to": to_addr,
-                    "data": calldata,
-                    "gas": "0x50000"
-                }],
-                "id": 1
-            }))
-            .send()
-            .await
-            .map_err(|e| ApiError::Internal(format!("RPC call failed: {}", e)))?;
-
-        let rpc_body: serde_json::Value = rpc_resp
-            .json()
-            .await
-            .map_err(|e| ApiError::Internal(format!("RPC parse error: {}", e)))?;
-
-        if let Some(err) = rpc_body.get("error") {
-            return Err(ApiError::Internal(format!(
-                "RPC error: {}",
-                err.get("message")
-                    .and_then(|m| m.as_str())
-                    .unwrap_or("unknown")
-            )));
-        }
-
-        let tx_hash = rpc_body
-            .get("result")
-            .and_then(|r| r.as_str())
-            .ok_or_else(|| ApiError::Internal("RPC did not return tx_hash".into()))?;
+        let tx_hash = self.relayer.submit_claim_for(
+            &rpc_url,
+            &contract_addr_hex,
+            &calldata,
+            0x50000, // gas limit
+        ).await?;
 
         // 9. 记录
         self.claim_repo
@@ -390,7 +362,7 @@ impl ClaimService {
                 &amount_str,
                 &nonce_num.to_string(),
                 &sig_hex,
-                tx_hash,
+                &tx_hash,
             )
             .await?;
 

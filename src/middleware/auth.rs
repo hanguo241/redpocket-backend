@@ -5,27 +5,19 @@ use axum::{
     response::Response,
 };
 use jsonwebtoken::{decode, DecodingKey, Validation};
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use redpacket_backend::error::{ApiError, ApiResult};
 use crate::{
     admin::auth::AdminClaims,
     app::AppState,
-    error::{ApiError, ApiResult},
 };
-
-/// JWT 声明
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Claims {
-    pub sub: Uuid,
-    pub app_key: String,
-    pub exp: usize,
-}
 
 /// 认证后的项目上下文
 #[derive(Debug, Clone)]
 pub struct AuthContext {
     pub project_id: Uuid,
+    #[allow(dead_code)]
     pub app_key: String,
 }
 
@@ -34,16 +26,6 @@ pub struct AuthContext {
 pub struct AdminContext {
     pub admin_id: Uuid,
     pub role: String,
-}
-
-/// HMAC 签名验证 (用于 API 请求鉴权)
-pub fn verify_hmac_signature(
-    app_secret: &str,
-    timestamp: &str,
-    body: &str,
-    signature: &str,
-) -> Result<(), ApiError> {
-    verify_hmac_signature_bytes(app_secret, timestamp, body.as_bytes(), signature)
 }
 
 /// HMAC 签名验证，使用原始 body bytes 避免 JSON 格式化差异
@@ -87,15 +69,9 @@ pub async fn require_admin(
     .map_err(|_| ApiError::Unauthorized("Invalid admin token".into()))?
     .claims;
 
-    let active: Option<bool> = sqlx::query_scalar(
-        "SELECT is_active FROM admin_users WHERE id=$1 AND role=$2",
-    )
-    .bind(claims.sub)
-    .bind(&claims.role)
-    .fetch_optional(&state.db)
-    .await?;
+    let active = state.admin_repo.find_active_by_id(claims.sub, &claims.role).await?;
 
-    if active != Some(true) {
+    if !active {
         return Err(ApiError::Unauthorized("Admin account is inactive".into()));
     }
 

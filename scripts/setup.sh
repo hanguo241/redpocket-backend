@@ -28,10 +28,16 @@ psql -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME'" | gr
     && echo "Database '$DB_NAME' already exists" \
     || { createdb "$DB_NAME" && echo "Created database '$DB_NAME'"; }
 
-# 4. Run cargo check
-echo ">>> Checking compilation..."
-cargo check --manifest-path Cargo.toml
+# 4. Build all binaries
+echo ">>> Building all binaries..."
+cargo build --bins --manifest-path Cargo.toml
 
 echo ""
 echo "=== Setup complete! ==="
-echo "Run 'cargo run' to start the server."
+echo ""
+echo "Available binaries:"
+echo "  cargo run --bin redpacket-backend          # Main API server"
+echo "  cargo run --bin redpacket-sync-worker      # Onchain ID backfill worker"
+echo ""
+echo "Quick start:"
+echo "  ./scripts/dev.sh                           # Start both services"

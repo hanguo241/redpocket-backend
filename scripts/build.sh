@@ -7,14 +7,18 @@ BUILD_PROFILE="${1:-release}"
 
 case "$BUILD_PROFILE" in
     release)
-        echo ">>> Building release binary..."
-        cargo build --release
-        echo ">>> Binary: target/release/redpacket-backend"
+        echo ">>> Building release binaries..."
+        cargo build --release --bins
+        echo ">>> Binaries:"
+        echo "  - target/release/redpacket-backend"
+        echo "  - target/release/redpacket-sync-worker"
         ;;
     dev|debug)
-        echo ">>> Building debug binary..."
-        cargo build
-        echo ">>> Binary: target/debug/redpacket-backend"
+        echo ">>> Building debug binaries..."
+        cargo build --bins
+        echo ">>> Binaries:"
+        echo "  - target/debug/redpacket-backend"
+        echo "  - target/debug/redpacket-sync-worker"
         ;;
     *)
         echo "Usage: $0 [release|debug]"

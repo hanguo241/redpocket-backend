@@ -1,0 +1,15 @@
+[Unit]
+Description=RedPacket Onchain ID Sync Worker
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/opt/redpacket-backend
+ExecStart=/opt/redpacket-backend/redpacket-sync-worker
+Restart=always
+RestartSec=10
+EnvironmentFile=/opt/redpacket-backend/.env
+
+[Install]
+WantedBy=multi-user.target

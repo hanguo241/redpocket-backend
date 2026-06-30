@@ -2,19 +2,16 @@ use axum::{extract::State, Json};
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::error::{ApiError, ApiResult};
+use redpacket_backend::error::{ApiError, ApiResult};
 use crate::AppState;
 
 /// GET /api/v1/admin/projects
 pub async fn list(State(state): State<AppState>) -> ApiResult<Json<serde_json::Value>> {
-    let rows = sqlx::query_as::<_, (Uuid, String, String, chrono::DateTime<chrono::Utc>)>(
-        "SELECT id, name, app_key, created_at FROM projects ORDER BY created_at DESC",
-    )
-    .fetch_all(&state.db).await?;
+    let rows = state.project_repo.list_all().await?;
 
     Ok(Json(json!({
-        "projects": rows.iter().map(|(id, name, key, created)| json!({
-            "id": id, "name": name, "app_key": key, "created_at": created
+        "projects": rows.iter().map(|r| json!({
+            "id": r.id, "name": r.name, "app_key": r.app_key, "created_at": r.created_at
         })).collect::<Vec<_>>()
     })))
 }
@@ -30,9 +27,7 @@ pub async fn create(
     let key = Uuid::new_v4().to_string().replace("-", "");
     let secret = Uuid::new_v4().to_string().replace("-", "");
 
-    sqlx::query("INSERT INTO projects (id, name, app_key, app_secret) VALUES ($1,$2,$3,$4)")
-        .bind(pid).bind(name).bind(&key).bind(&secret)
-        .execute(&state.db).await?;
+    state.project_repo.admin_create(pid, name, &key, &secret).await?;
 
     Ok(Json(json!({"id": pid, "name": name, "app_key": key, "app_secret": secret})))
 }
@@ -44,11 +39,7 @@ pub async fn update(
     Json(body): Json<serde_json::Value>,
 ) -> ApiResult<Json<serde_json::Value>> {
     if let Some(name) = body.get("name").and_then(|v| v.as_str()) {
-        sqlx::query("UPDATE projects SET name=$1 WHERE id=$2")
-            .bind(name).bind(id).execute(&state.db).await?;
-    }
-    if let Some(active) = body.get("is_active") {
-        // projects 表目前没有 is_active 字段，扩展预留
+        state.project_repo.update_name(id, name).await?;
     }
     Ok(Json(json!({"status": "updated"})))
 }

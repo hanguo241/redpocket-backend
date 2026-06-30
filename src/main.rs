@@ -1,13 +1,7 @@
 mod admin;
 mod app;
-mod config;
-mod db;
-mod error;
 mod handlers;
 mod middleware;
-mod models;
-mod repos;
-mod services;
 
 use std::sync::Arc;
 
@@ -19,8 +13,9 @@ use axum::{
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
+use redpacket_backend::config::Config;
+use redpacket_backend::db;
 use crate::app::AppState;
-use crate::config::Config;
 
 #[tokio::main]
 async fn main() {
@@ -93,7 +88,7 @@ fn api_routes(state: AppState) -> Router<AppState> {
         .route("/login", post(admin::auth::login));
 
     let admin_protected_routes = Router::new()
-        .route("/stats", get(handlers::admin::get_stats))
+        .route("/stats", get(admin::dashboard::dashboard))
         .route("/dashboard", get(admin::dashboard::dashboard))
         .route("/projects", get(admin::projects::list).post(admin::projects::create))
         .route("/projects/{id}", axum::routing::put(admin::projects::update))

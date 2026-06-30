@@ -45,15 +45,14 @@ fn calculate_fee_amounts(total_amount: &str, fee_bps: u32) -> ApiResult<(String,
 }
 
 /// 从 RPC 获取当前 gas price (wei)，失败返回默认 10 gwei
-async fn fetch_gas_price(rpc_url: &str) -> u128 {
-    let client = reqwest::Client::new();
+async fn fetch_gas_price(client: &reqwest::Client, rpc_url: &str) -> u128 {
     let resp = client
         .post(rpc_url)
         .json(&json!({
             "jsonrpc": "2.0", "method": "eth_gasPrice", "params": [], "id": 1
         }))
         .send()
-        .await; // TODO: 从 chain config 读取默认值而非硬编码 10 gwei
+        .await;
 
     match resp {
         Ok(resp) => {
@@ -77,6 +76,7 @@ pub struct PacketService {
     pub config_repo: ConfigRepo,
     pub signer: Arc<SignerService>,
     pub config: Arc<Config>,
+    pub http_client: reqwest::Client,
 }
 
 impl PacketService {
@@ -85,12 +85,14 @@ impl PacketService {
         config_repo: ConfigRepo,
         signer: Arc<SignerService>,
         config: Arc<Config>,
+        http_client: reqwest::Client,
     ) -> Self {
         Self {
             packet_repo,
             config_repo,
             signer,
             config,
+            http_client,
         }
     }
 
@@ -106,6 +108,7 @@ impl PacketService {
         start_time: Option<i64>,
         end_time: i64,
         gas_reserve_wei: Option<String>,
+        claim_mode: &str,
     ) -> ApiResult<serde_json::Value> {
         if total_amount.is_empty() {
             return Err(ApiError::BadRequest("total_amount is required".into()));
@@ -151,7 +154,7 @@ impl PacketService {
             .await?
             .unwrap_or_default();
         let gas_price_wei = if !rpc_url.is_empty() {
-            fetch_gas_price(&rpc_url).await
+            fetch_gas_price(&self.http_client, &rpc_url).await
         } else {
             10_000_000_000
         };
@@ -160,7 +163,13 @@ impl PacketService {
         let estimated_gas_wei = (estimated_gas as u128) * gas_price_wei;
         let estimated_gas_eth = format!("{}", estimated_gas_wei as f64 / 1e18);
         let gas_price_gwei = format!("{}", gas_price_wei as f64 / 1e9);
-        let gas_reserve = gas_reserve_wei.unwrap_or_else(|| estimated_gas_wei.to_string());
+
+        // 自领模式不需要 gas 准备金，代领/双模式才需要
+        let gas_reserve = if claim_mode == "self" {
+            "0".to_string()
+        } else {
+            gas_reserve_wei.unwrap_or_else(|| estimated_gas_wei.to_string())
+        };
 
         // ABI 编码
         let ptype = match packet_type {
@@ -207,8 +216,10 @@ impl PacketService {
 
         // 计算交易 value
         let total_value = if token == "native" {
-            let amount_num: u128 = total_amount.parse().unwrap_or(0);
-            let gas_num: u128 = gas_reserve.parse().unwrap_or(0);
+            let amount_num: u128 = total_amount.parse()
+                .map_err(|_| ApiError::BadRequest("Invalid total_amount number".into()))?;
+            let gas_num: u128 = gas_reserve.parse()
+                .map_err(|_| ApiError::BadRequest("Invalid gas_reserve_wei number".into()))?;
             (amount_num + gas_num).to_string()
         } else {
             gas_reserve.clone()
@@ -292,6 +303,7 @@ impl PacketService {
                 signer_address,
                 fee_bps,
                 fee_collector,
+                tx_hash,
                 gas_reserve_wei,
                 gas_estimate_multiplier,
             )
@@ -306,21 +318,17 @@ impl PacketService {
             gas_reserve_wei,
         );
 
-        // 同步获取 onchain_packet_id（最多等 5 秒）
-        let ch = chain.to_string();
+        // 后台异步获取 onchain_packet_id（指数退避重试，不阻塞 API 响应）
+        let p_repo = self.packet_repo.clone();
+        let c_repo = self.config_repo.clone();
+        let client = self.http_client.clone();
         let txh = tx_hash.to_string();
-        let rpc = self.config_repo.find_rpc_url(&ch).await.unwrap_or_default();
-        if let Some(rpc_url) = rpc.as_ref().filter(|s| !s.is_empty()) {
-            match crate::services::receipt::fetch_onchain_packet_id(rpc_url, &txh).await {
-                Ok(Some(onchain_id)) => {
-                    self.packet_repo.update_onchain_id(packet_id, onchain_id as i64).await?;
-                    tracing::info!("onchain_packet_id={} for packet={}", onchain_id, packet_id);
-                }
-                _ => {
-                    tracing::warn!("Could not fetch onchain_packet_id for packet={}", packet_id);
-                }
-            }
-        }
+        let ch = chain.to_string();
+        let pid = packet_id;
+
+        tokio::spawn(async move {
+            sync_onchain_packet_id(&client, pid, &txh, &ch, c_repo, p_repo).await;
+        });
 
         let host = share_url_base(&self.config);
         let share_url = format!("{}/claim/{}", host, packet_id);
@@ -362,4 +370,90 @@ impl PacketService {
             "refund_available_at": row.refund_available_at,
         }))
     }
+}
+
+// ============ 后台 onchain_id 同步 ============
+
+/// 后台异步轮询交易回执，获取 onchain_packet_id，带指数退避重试
+///
+/// 重试间隔: 1s → 2s → 4s → 8s → 16s → 30s → 60s → 120s → 300s
+/// 总耗时约 8 分钟，超过后静默退出（onchain_id 可通过 admin API 手动补录）
+async fn sync_onchain_packet_id(
+    client: &reqwest::Client,
+    packet_id: Uuid,
+    tx_hash: &str,
+    chain: &str,
+    config_repo: ConfigRepo,
+    packet_repo: PacketRepo,
+) {
+    let rpc_url = match config_repo.find_rpc_url(chain).await {
+        Ok(Some(url)) if !url.is_empty() => url,
+        Ok(_) => {
+            tracing::warn!(
+                "[sync_onchain] No RPC URL for chain={}; skipping onchain sync",
+                chain
+            );
+            return;
+        }
+        Err(e) => {
+            tracing::error!(
+                "[sync_onchain] Failed to query RPC URL for chain={}: {}",
+                chain,
+                e
+            );
+            return;
+        }
+    };
+
+    // 指数退避间隔（秒）
+    let delays_secs: &[u64] = &[1, 2, 4, 8, 16, 30, 60, 120, 300];
+
+    for (attempt, delay) in delays_secs.iter().enumerate() {
+        match crate::services::receipt::fetch_onchain_packet_id(client, &rpc_url, tx_hash).await {
+            Ok(Some(id)) => {
+                if let Err(e) = packet_repo.update_onchain_id(packet_id, id as i64).await {
+                    tracing::error!(
+                        "[sync_onchain] DB update failed for packet={}: {}",
+                        packet_id,
+                        e
+                    );
+                } else {
+                    tracing::info!(
+                        "[sync_onchain] onchain_packet_id={} for packet={}",
+                        id,
+                        packet_id
+                    );
+                }
+                return;
+            }
+            Ok(None) => {
+                tracing::debug!(
+                    "[sync_onchain] Receipt not ready for tx={} (attempt={}/{})",
+                    tx_hash,
+                    attempt + 1,
+                    delays_secs.len(),
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "[sync_onchain] RPC error for tx={}: {} (attempt={}/{})",
+                    tx_hash,
+                    e,
+                    attempt + 1,
+                    delays_secs.len(),
+                );
+            }
+        }
+
+        if attempt < delays_secs.len() - 1 {
+            tokio::time::sleep(std::time::Duration::from_secs(*delay)).await;
+        }
+    }
+
+    tracing::warn!(
+        "[sync_onchain] All retries exhausted for packet={} tx={} ({} attempts)",
+        packet_id,
+        tx_hash,
+        delays_secs.len(),
+    );
 }

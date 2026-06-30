@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -70,6 +71,54 @@ impl ClaimRepo {
         Ok(())
     }
 
+    // ==================== Admin: 列表 ====================
+
+    /// Admin 条件查询领取记录
+    pub async fn admin_list(
+        &self,
+        packet_id: Option<Uuid>,
+        status: Option<&str>,
+    ) -> ApiResult<Vec<AdminClaimRow>> {
+        use sqlx::QueryBuilder;
+
+        let mut builder = QueryBuilder::new(
+            "SELECT c.id, c.packet_id, c.recipient_address, c.amount, c.status, c.tx_hash, c.created_at, p.chain
+             FROM claims c JOIN packets p ON p.id=c.packet_id WHERE 1=1"
+        );
+
+        if let Some(pid) = packet_id {
+            builder.push(" AND c.packet_id = ");
+            builder.push_bind(pid);
+        }
+        if let Some(status) = status {
+            builder.push(" AND c.status = ");
+            builder.push_bind(status);
+        }
+        builder.push(" ORDER BY c.created_at DESC LIMIT 100");
+
+        let rows = builder
+            .build_query_as::<(
+                Uuid, Uuid, String, String, String, Option<String>,
+                DateTime<Utc>, String,
+            )>()
+            .fetch_all(&self.db)
+            .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| AdminClaimRow {
+                id: r.0,
+                packet_id: r.1,
+                recipient_address: r.2,
+                amount: r.3,
+                status: r.4,
+                tx_hash: r.5,
+                created_at: r.6,
+                chain: r.7,
+            })
+            .collect())
+    }
+
     /// 代领确记录
     pub async fn confirm_proxy(
         &self,
@@ -111,4 +160,16 @@ impl ClaimRepo {
         .await?;
         Ok(())
     }
+}
+
+/// Admin 领取记录列表行
+pub struct AdminClaimRow {
+    pub id: Uuid,
+    pub packet_id: Uuid,
+    pub recipient_address: String,
+    pub amount: String,
+    pub status: String,
+    pub tx_hash: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub chain: String,
 }

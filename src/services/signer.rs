@@ -38,7 +38,7 @@ impl SignerService {
         contract_address: H160,
     ) -> ApiResult<Bytes> {
         let digest = Self::hash_eip712(packet_id, recipient, amount, nonce, deadline, chain_id, contract_address);
-        let mut sig = self.wallet.sign_hash(digest.into()).map_err(|e| ApiError::Crypto(e.to_string()))?;
+        let sig = self.wallet.sign_hash(digest.into()).map_err(|e| ApiError::Crypto(e.to_string()))?;
         // ethers-rs 的 to_vec 中 v 可能是 0/1，合约需要 27/28
         let v = if sig.v < 27 { sig.v + 27 } else { sig.v };
         let mut bytes = Vec::with_capacity(65);

@@ -1,16 +1,12 @@
 use axum::{extract::State, Json};
 use serde_json::json;
 
-use crate::error::{ApiError, ApiResult};
+use redpacket_backend::error::{ApiError, ApiResult};
 use crate::AppState;
 
 /// GET /api/v1/admin/gas-config
 pub async fn get(State(state): State<AppState>) -> ApiResult<Json<serde_json::Value>> {
-    let rows = sqlx::query_as::<_, (String, String)>(
-        "SELECT key, value FROM system_config ORDER BY key",
-    )
-    .fetch_all(&state.db)
-    .await?;
+    let rows = state.config_repo.get_all_config().await?;
 
     let mut config = serde_json::Map::new();
     for (key, value) in &rows {
@@ -41,15 +37,7 @@ pub async fn update(
             return Err(ApiError::BadRequest(format!("Invalid value for key '{}'", key)));
         };
 
-        sqlx::query(
-            r#"INSERT INTO system_config (key, value, updated_at)
-               VALUES ($1, $2, NOW())
-               ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()"#,
-        )
-        .bind(key)
-        .bind(&val_str)
-        .execute(&state.db)
-        .await?;
+        state.config_repo.upsert_config(key, &val_str).await?;
     }
 
     Ok(Json(json!({"status": "updated"})))

@@ -3,12 +3,20 @@ set -euo pipefail
 
 echo "=== RedPacket Backend Dev Server ==="
 
-# Try cargo-watch for hot reload, fallback to cargo run
+# 1. Start sync-worker in background
+echo ">>> Starting sync-worker (background)..."
+cargo run --bin redpacket-sync-worker &
+SYNC_PID=$!
+
+# 2. Start main backend
+echo ">>> Starting main backend..."
 if command -v cargo-watch >/dev/null 2>&1; then
-    echo ">>> Starting with hot reload (cargo-watch)..."
-    cargo watch -x run
+    echo ">>> (with hot reload via cargo-watch)"
+    cargo watch -x "run --bin redpacket-backend"
 else
-    echo ">>> cargo-watch not found. Install with: cargo install cargo-watch"
-    echo ">>> Starting without hot reload..."
-    cargo run
+    cargo run --bin redpacket-backend
 fi
+
+# Cleanup: stop sync-worker when main process exits
+echo ">>> Stopping sync-worker (pid=$SYNC_PID)..."
+kill $SYNC_PID 2>/dev/null || true

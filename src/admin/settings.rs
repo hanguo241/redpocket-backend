@@ -1,7 +1,7 @@
 use axum::{extract::State, Json};
 use serde_json::json;
 
-use crate::error::ApiResult;
+use redpacket_backend::error::ApiResult;
 use crate::AppState;
 
 /// GET /api/v1/admin/settings

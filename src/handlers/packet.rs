@@ -5,9 +5,9 @@ use axum::{
 };
 use uuid::Uuid;
 
-use crate::error::{ApiError, ApiResult};
+use redpacket_backend::error::{ApiError, ApiResult};
 use crate::middleware::auth::AuthContext;
-use crate::models::packet::CreatePacketRequest;
+use redpacket_backend::models::packet::CreatePacketRequest;
 use crate::AppState;
 
 /// POST /api/v1/packet/prepare
@@ -15,6 +15,7 @@ pub async fn prepare(
     State(state): State<AppState>,
     Json(req): Json<CreatePacketRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
+    let claim_mode = req.claim_mode.as_deref().unwrap_or("self");
     let resp = state
         .packet_service
         .prepare(
@@ -27,6 +28,7 @@ pub async fn prepare(
             req.start_time,
             req.end_time,
             req.gas_reserve_wei,
+            claim_mode,
         )
         .await?;
     Ok(Json(resp))

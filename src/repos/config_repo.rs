@@ -81,6 +81,97 @@ impl ConfigRepo {
         Ok(row.map(|r| r.0))
     }
 
+    // ==================== Admin: ChainConfigs ====================
+
+    /// 获取所有活跃链配置（对外 API 用）
+    pub async fn list_active_chains(&self) -> ApiResult<Vec<ChainConfigRow>> {
+        let rows = sqlx::query_as::<_, (String, i64, String, String, Option<String>, bool)>(
+            "SELECT chain, chain_id, rpc_url, contract_address, explorer_url, is_active
+             FROM chain_configs WHERE is_active = true ORDER BY chain_id",
+        )
+        .fetch_all(&self.db)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| ChainConfigRow {
+                chain: r.0,
+                chain_id: r.1,
+                rpc_url: r.2,
+                contract_address: r.3,
+                explorer_url: r.4,
+                is_active: r.5,
+            })
+            .collect())
+    }
+
+    /// 获取所有链配置（admin 管理用）
+    pub async fn list_chain_configs(&self) -> ApiResult<Vec<ChainConfigRow>> {
+        let rows = sqlx::query_as::<_, (String, i64, String, String, Option<String>, bool)>(
+            "SELECT chain, chain_id, rpc_url, contract_address, explorer_url, is_active FROM chain_configs ORDER BY chain_id",
+        )
+        .fetch_all(&self.db)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| ChainConfigRow {
+                chain: r.0,
+                chain_id: r.1,
+                rpc_url: r.2,
+                contract_address: r.3,
+                explorer_url: r.4,
+                is_active: r.5,
+            })
+            .collect())
+    }
+
+    /// 更新链配置（admin 管理用）
+    pub async fn update_chain_config(
+        &self,
+        chain: &str,
+        rpc_url: &str,
+        contract_address: &str,
+        is_active: bool,
+    ) -> ApiResult<()> {
+        sqlx::query(
+            "UPDATE chain_configs SET rpc_url=$1, contract_address=$2, is_active=$3 WHERE chain=$4",
+        )
+        .bind(rpc_url)
+        .bind(contract_address)
+        .bind(is_active)
+        .bind(chain)
+        .execute(&self.db)
+        .await?;
+        Ok(())
+    }
+
+    // ==================== Admin: SystemConfig ====================
+
+    /// 获取所有 system_config 键值对
+    pub async fn get_all_config(&self) -> ApiResult<Vec<(String, String)>> {
+        let rows = sqlx::query_as::<_, (String, String)>(
+            "SELECT key, value FROM system_config ORDER BY key",
+        )
+        .fetch_all(&self.db)
+        .await?;
+        Ok(rows)
+    }
+
+    /// 写入/覆盖 system_config 键值对
+    pub async fn upsert_config(&self, key: &str, value: &str) -> ApiResult<()> {
+        sqlx::query(
+            r#"INSERT INTO system_config (key, value, updated_at)
+               VALUES ($1, $2, NOW())
+               ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()"#,
+        )
+        .bind(key)
+        .bind(value)
+        .execute(&self.db)
+        .await?;
+        Ok(())
+    }
+
     /// 读 system_config
     pub async fn load_gas_config(&self) -> ApiResult<(u64, f64)> {
         let rows = sqlx::query_as::<_, (String, String)>(
@@ -109,4 +200,14 @@ pub struct ChainContractRow {
     pub chain: String,
     pub contract_address: String,
     pub chain_id: i64,
+}
+
+/// 完整链配置（admin 展示用）
+pub struct ChainConfigRow {
+    pub chain: String,
+    pub chain_id: i64,
+    pub rpc_url: String,
+    pub contract_address: String,
+    pub explorer_url: Option<String>,
+    pub is_active: bool,
 }

@@ -1,11 +1,13 @@
 use crate::error::{ApiError, ApiResult};
 
-const PACKET_CREATED_TOPIC: &str = "0xfeff5a9e606d1624a79886b6246af01ceaa9da69ba26af2782921a21b02bc524";
+const PACKET_CREATED_TOPIC: &str = "0x36503e5ec0e2c58fcedb9df5749516b962da13bd4b61064266b21b757524bda9";
 
 /// 通过 RPC 轮询交易回执，解析 PacketCreated 事件中的 onchain_packet_id
-pub async fn fetch_onchain_packet_id(rpc_url: &str, tx_hash: &str) -> ApiResult<Option<u64>> {
-    let client = reqwest::Client::new();
-
+pub async fn fetch_onchain_packet_id(
+    client: &reqwest::Client,
+    rpc_url: &str,
+    tx_hash: &str,
+) -> ApiResult<Option<u64>> {
     for i in 0..10 {
         let resp = client
             .post(rpc_url)
@@ -39,8 +41,16 @@ pub async fn fetch_onchain_packet_id(rpc_url: &str, tx_hash: &str) -> ApiResult<
             if topics[0].as_str() == Some(PACKET_CREATED_TOPIC) {
                 if let Some(hex) = topics[1].as_str() {
                     let s = hex.trim_start_matches("0x");
-                    let id = u64::from_str_radix(s, 16).unwrap_or(0);
-                    return Ok(Some(id));
+                    match u64::from_str_radix(s, 16) {
+                        Ok(id) => return Ok(Some(id)),
+                        Err(e) => {
+                            tracing::error!(
+                                "fetch_onchain_packet_id: invalid hex in topic: {}: {}",
+                                s, e
+                            );
+                            return Ok(None);
+                        }
+                    }
                 }
             }
         }

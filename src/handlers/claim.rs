@@ -1,7 +1,7 @@
 use axum::{extract::State, Json};
 use uuid::Uuid;
 
-use crate::error::{ApiError, ApiResult};
+use redpacket_backend::error::{ApiError, ApiResult};
 use crate::AppState;
 
 /// POST /api/v1/claim/prepare

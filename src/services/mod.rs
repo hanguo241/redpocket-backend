@@ -4,3 +4,4 @@ pub mod relayer;
 pub mod receipt;
 pub mod packet_service;
 pub mod claim_service;
+pub mod project_service;

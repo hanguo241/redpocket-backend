@@ -1,38 +1,23 @@
 use axum::{extract::State, Json};
-use serde::Serialize;
 use serde_json::json;
 
-use crate::{error::ApiResult, AppState};
+use redpacket_backend::error::ApiResult;
+use crate::AppState;
 
 /// GET /api/v1/config/gas
 pub async fn get_gas_config(
     State(state): State<AppState>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let rows = sqlx::query_as::<_, (String, String)>(
-        "SELECT key, value FROM system_config ORDER BY key",
-    )
-    .fetch_all(&state.db)
-    .await?;
+    let rows = state.config_repo.get_all_config().await?;
 
     let mut config = serde_json::Map::new();
-    for (key, value) in &rows {
-        config.insert(key.clone(), json!(value));
+    for (key, value) in rows {
+        config.insert(key, json!(value));
     }
 
     Ok(Json(json!({
         "config": config
     })))
-}
-
-/// 链配置返回
-#[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct ChainConfig {
-    pub chain: String,
-    pub chain_id: i64,
-    pub rpc_url: String,
-    pub contract_address: String,
-    pub explorer_url: Option<String>,
-    pub is_active: bool,
 }
 
 /// GET /api/v1/config/chains
@@ -41,18 +26,16 @@ pub struct ChainConfig {
 pub async fn get_chains(
     State(state): State<AppState>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let chains = sqlx::query_as::<_, ChainConfig>(
-        r#"
-        SELECT chain, chain_id, rpc_url, contract_address, explorer_url, is_active
-        FROM chain_configs
-        WHERE is_active = true
-        ORDER BY chain_id
-        "#,
-    )
-    .fetch_all(&state.db)
-    .await?;
+    let chains = state.config_repo.list_active_chains().await?;
 
     Ok(Json(json!({
-        "chains": chains
+        "chains": chains.iter().map(|r| json!({
+            "chain": r.chain,
+            "chain_id": r.chain_id,
+            "rpc_url": r.rpc_url,
+            "contract_address": r.contract_address,
+            "explorer_url": r.explorer_url,
+            "is_active": r.is_active,
+        })).collect::<Vec<_>>()
     })))
 }
