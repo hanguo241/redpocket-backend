@@ -12,7 +12,14 @@ fi
 
 DB_URL="${DATABASE_URL:-postgres://pony@localhost:5432/redpacket}"
 
-# Use sqlx migrate
+# Ensure sqlx-cli is installed
+if ! command -v sqlx &>/dev/null && ! cargo sqlx --version &>/dev/null 2>&1; then
+    echo ">>> sqlx-cli not found. Installing via cargo..."
+    cargo install sqlx-cli --locked
+    echo ""
+fi
+
+# Run migrations
 echo ">>> Running migrations on $DB_URL"
 sqlx migrate run --database-url "$DB_URL"
 

@@ -1,6 +1,6 @@
 use crate::error::{ApiError, ApiResult};
 
-const PACKET_CREATED_TOPIC: &str = "0x36503e5ec0e2c58fcedb9df5749516b962da13bd4b61064266b21b757524bda9";
+const PACKET_CREATED_TOPIC: &str = "0xfeff5a9e606d1624a79886b6246af01ceaa9da69ba26af2782921a21b02bc524";
 
 /// 通过 RPC 轮询交易回执，解析 PacketCreated 事件中的 onchain_packet_id
 pub async fn fetch_onchain_packet_id(
