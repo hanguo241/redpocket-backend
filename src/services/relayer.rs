@@ -30,6 +30,31 @@ impl RelayerService {
         self.wallet.address()
     }
 
+    /// 获取当前 gas price (wei)
+    async fn fetch_gas_price(&self, rpc_url: &str) -> ApiResult<String> {
+        let resp: serde_json::Value = self
+            .http_client
+            .post(rpc_url)
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "method": "eth_gasPrice",
+                "params": [],
+                "id": 1
+            }))
+            .send()
+            .await
+            .map_err(|e| ApiError::Internal(format!("RPC gasPrice call failed: {}", e)))?
+            .json()
+            .await
+            .map_err(|e| ApiError::Internal(format!("RPC gasPrice parse failed: {}", e)))?;
+
+        resp
+            .get("result")
+            .and_then(|r| r.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| ApiError::Internal("RPC did not return gasPrice".into()))
+    }
+
     /// 提交 claimFor 交易 — 由 relayer 支付 gas
     pub async fn submit_claim_for(
         &self,
@@ -40,6 +65,9 @@ impl RelayerService {
     ) -> ApiResult<String> {
         let from = format!("{:?}", self.wallet.address());
         let to = format!("0x{}", contract_address.trim_start_matches("0x"));
+
+        // 先获取当前 gas price
+        let gas_price = self.fetch_gas_price(rpc_url).await?;
 
         let rpc_resp = self
             .http_client
@@ -52,6 +80,7 @@ impl RelayerService {
                     "to": to,
                     "data": calldata,
                     "gas": format!("0x{:x}", gas_limit),
+                    "gasPrice": gas_price,
                 }],
                 "id": 1
             }))
