@@ -174,7 +174,63 @@ impl ConfigRepo {
 
     // ==================== Token Configs ====================
 
+    /// 写入一条代币配置
+    pub async fn insert_token(&self, chain: &str, addr: &str, symbol: &str, name: &str, decimals: i32, is_native: bool, sort_order: i32) -> ApiResult<()> {
+        sqlx::query(
+            r#"INSERT INTO token_configs (chain, token_address, symbol, name, decimals, is_native, sort_order)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)
+               ON CONFLICT (chain, token_address) DO NOTHING"#
+        )
+        .bind(chain)
+        .bind(addr)
+        .bind(symbol)
+        .bind(name)
+        .bind(decimals)
+        .bind(is_native)
+        .bind(sort_order)
+        .execute(&self.db)
+        .await?;
+        Ok(())
+    }
+
+    /// 为指定链播种默认代币（空链时自动调用）
+    pub async fn seed_default_tokens(&self, chain: &str) -> ApiResult<()> {
+        let defaults: Vec<(&str, &str, &str, i32, bool, i32)> = match chain {
+            "LOCAL" => vec![
+                ("native", "ETH", "Local ETH", 18, true, 0),
+                ("0x5FbDB2315678afecb367f032d93F642f64180aa3", "RPT", "RedPacket Test Token", 18, false, 1),
+            ],
+            "ETH" => vec![
+                ("native", "ETH", "Ether", 18, true, 0),
+                ("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", "USDC", "USD Coin", 6, false, 1),
+                ("0xdAC17F958D2ee523a2206206994597C13D831ec7", "USDT", "Tether USD", 6, false, 2),
+                ("0x6B175474E89094C44Da98b954EedeAC495271d0F", "DAI", "Dai Stablecoin", 18, false, 3),
+                ("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599", "WBTC", "Wrapped Bitcoin", 8, false, 4),
+            ],
+            "BSC" => vec![
+                ("native", "BNB", "Binance Coin", 18, true, 0),
+                ("0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", "USDC", "USD Coin", 18, false, 1),
+                ("0x55d398326f99059fF775485246999027B3197955", "USDT", "Tether USD", 18, false, 2),
+            ],
+            "AB-Core" => vec![
+                ("native", "ABC", "AB-Core Coin", 18, true, 0),
+            ],
+            "AB-iOT" => vec![
+                ("native", "ABT", "AB-iOT Token", 18, true, 0),
+            ],
+            _ => vec![
+                ("native", "ETH", "Ether", 18, true, 0),
+            ],
+        };
+
+        for (addr, symbol, name, decimals, is_native, sort_order) in defaults {
+            self.insert_token(chain, addr, symbol, name, decimals, is_native, sort_order).await?;
+        }
+        Ok(())
+    }
+
     /// 获取指定链的代币列表
+    /// 如果该链尚未配置任何代币，自动播种默认代币
     pub async fn list_tokens(&self, chain: &str) -> ApiResult<Vec<TokenConfigRow>> {
         let rows = sqlx::query_as::<_, (String, String, String, i32, bool, i32)>(
             "SELECT token_address, symbol, name, decimals, is_native, sort_order
@@ -185,6 +241,31 @@ impl ConfigRepo {
         .bind(chain)
         .fetch_all(&self.db)
         .await?;
+
+        if rows.is_empty() {
+            // 自动播种默认代币后重新查询
+            self.seed_default_tokens(chain).await?;
+            let rows2 = sqlx::query_as::<_, (String, String, String, i32, bool, i32)>(
+                "SELECT token_address, symbol, name, decimals, is_native, sort_order
+                 FROM token_configs
+                 WHERE chain = $1
+                 ORDER BY sort_order ASC, symbol ASC",
+            )
+            .bind(chain)
+            .fetch_all(&self.db)
+            .await?;
+            return Ok(rows2
+                .into_iter()
+                .map(|r| TokenConfigRow {
+                    token_address: r.0,
+                    symbol: r.1,
+                    name: r.2,
+                    decimals: r.3,
+                    is_native: r.4,
+                    sort_order: r.5,
+                })
+                .collect());
+        }
 
         Ok(rows
             .into_iter()
