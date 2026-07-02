@@ -227,7 +227,7 @@ impl PacketService {
 
         let pid = Uuid::new_v4();
         let host = share_url_base(&self.config);
-        let share_url = format!("{}/claim/{}", host, pid);
+        let share_url = format!("{}/app?claim={}", host, pid);
 
         Ok(json!({
             "packet_id": pid,
@@ -331,7 +331,7 @@ impl PacketService {
         });
 
         let host = share_url_base(&self.config);
-        let share_url = format!("{}/claim/{}", host, packet_id);
+        let share_url = format!("{}/app?claim={}", host, packet_id);
 
         Ok(json!({
             "packet_id": packet_id,
