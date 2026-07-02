@@ -111,6 +111,7 @@ fn api_routes(state: AppState) -> Router<AppState> {
         .route("/claim/confirm", post(handlers::claim::confirm))
         .route("/claim/proxy", post(handlers::claim::proxy_claim))
         .route("/config/chains", get(handlers::config::get_chains))
+        .route("/config/tokens", get(handlers::config::get_tokens))
         .route("/config/gas", get(handlers::config::get_gas_config))
         .merge(public_packet_routes)
         .nest("/merchant", merchant_routes)

@@ -172,6 +172,33 @@ impl ConfigRepo {
         Ok(())
     }
 
+    // ==================== Token Configs ====================
+
+    /// 获取指定链的代币列表
+    pub async fn list_tokens(&self, chain: &str) -> ApiResult<Vec<TokenConfigRow>> {
+        let rows = sqlx::query_as::<_, (String, String, String, i32, bool, i32)>(
+            "SELECT token_address, symbol, name, decimals, is_native, sort_order
+             FROM token_configs
+             WHERE chain = $1
+             ORDER BY sort_order ASC, symbol ASC",
+        )
+        .bind(chain)
+        .fetch_all(&self.db)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| TokenConfigRow {
+                token_address: r.0,
+                symbol: r.1,
+                name: r.2,
+                decimals: r.3,
+                is_native: r.4,
+                sort_order: r.5,
+            })
+            .collect())
+    }
+
     /// 读 system_config
     pub async fn load_gas_config(&self) -> ApiResult<(u64, f64)> {
         let rows = sqlx::query_as::<_, (String, String)>(
@@ -200,6 +227,16 @@ pub struct ChainContractRow {
     pub chain: String,
     pub contract_address: String,
     pub chain_id: i64,
+}
+
+/// 代币配置
+pub struct TokenConfigRow {
+    pub token_address: String,
+    pub symbol: String,
+    pub name: String,
+    pub decimals: i32,
+    pub is_native: bool,
+    pub sort_order: i32,
 }
 
 /// 完整链配置（admin 展示用）

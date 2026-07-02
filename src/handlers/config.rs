@@ -20,6 +20,28 @@ pub async fn get_gas_config(
     })))
 }
 
+/// GET /api/v1/config/tokens?chain=LOCAL
+///
+/// 返回指定链的代币列表
+pub async fn get_tokens(
+    State(state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let chain = params.get("chain").map(|s| s.as_str()).unwrap_or("LOCAL");
+    let tokens = state.config_repo.list_tokens(chain).await?;
+
+    Ok(Json(json!({
+        "chain": chain,
+        "tokens": tokens.iter().map(|t| json!({
+            "token_address": t.token_address,
+            "symbol": t.symbol,
+            "name": t.name,
+            "decimals": t.decimals,
+            "is_native": t.is_native,
+        })).collect::<Vec<_>>()
+    })))
+}
+
 /// GET /api/v1/config/chains
 ///
 /// 返回平台支持的链列表
