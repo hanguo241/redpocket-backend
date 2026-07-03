@@ -40,9 +40,9 @@ async fn main() {
         .expect("Failed to connect to database");
 
     // 运行迁移
-    db::run_migrations(&pool)
-        .await
-        .expect("Failed to run database migrations");
+    // db::run_migrations(&pool)
+    //     .await
+    //     .expect("Failed to run database migrations");
 
     // 初始化应用状态
     let state = AppState::new(config.clone(), pool).await;
