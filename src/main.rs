@@ -100,6 +100,8 @@ fn api_routes(state: AppState) -> Router<AppState> {
         .route("/settings", get(admin::settings::get))
         .route("/gas-config", get(admin::gas_config::get).put(admin::gas_config::update))
         .route("/fees/withdraw-transaction", post(admin::fees::prepare_withdraw_transaction))
+        .route("/tokens", get(admin::tokens::list).post(admin::tokens::create))
+        .route("/tokens/{id}", axum::routing::put(admin::tokens::update).delete(admin::tokens::delete))
         .route_layer(axum_middleware::from_fn_with_state(
             state,
             middleware::auth::require_admin,

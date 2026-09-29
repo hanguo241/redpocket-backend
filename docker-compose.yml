@@ -1,0 +1,45 @@
+# =============================================
+# RedPacket 后端 — 生产部署（Linux 服务器）
+# =============================================
+# 用法：
+#   cp .env.example .env     # 填生产值（尤其是 SIGNER_PRIVATE_KEY / JWT_SECRET / DATABASE_URL）
+#   docker compose up -d --build
+#   docker compose logs -f backend
+#
+# 前端不进这里：官网和管理台走 Vercel。数据库用服务器上现有的 PostgreSQL。
+# =============================================
+
+services:
+  backend:
+    build: .
+    image: redpacket-backend:latest
+    container_name: redpacket-backend
+    restart: always
+    env_file: .env
+
+    # host 网络：容器直接用宿主机网络栈，于是 DATABASE_URL 里的 127.0.0.1:5432
+    # 就是服务器上那个 PostgreSQL —— 不用改 postgresql.conf 的 listen_addresses，
+    # 也不用动 pg_hba.conf（改线上数据库配置风险更大）。
+    # 副作用：ports 映射在此模式下无效（也不需要，直接占宿主机 8080）。
+    network_mode: host
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  sync-worker:
+    image: redpacket-backend:latest   # 复用上面构建的镜像，不重复构建
+    container_name: redpacket-sync-worker
+    restart: always
+    env_file: .env
+    network_mode: host
+    command: ["./redpacket-sync-worker"]
+    depends_on:
+      - backend
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
