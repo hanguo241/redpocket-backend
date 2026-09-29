@@ -70,7 +70,7 @@ sudo bash scripts/deploy.sh install api.example.com
 
 需要交互输入平台签名私钥、独立 relayer 私钥、官网 HTTPS 地址和新的管理员密码。已有业务必须使用原平台签名密钥，relayer 钱包需有 gas。脚本不读取或复制开发机 `.env`。数据库密码及 JWT 保存在服务器 `/etc/redpacket/backend.env`，不会打印。
 
-服务器需要能访问 Ubuntu 软件源、GitHub、rustup、crates.io 及链 RPC。编译资源有限时使用 `sudo bash scripts/04-build.sh 1`。`install` 可重试：已生成的配置不会覆盖；初始化标记允许数据库创建或密码输入中断后继续。数据库已存在但没有本脚本配置时会拒绝接管。
+服务器需要能访问 Ubuntu 软件源、GitHub、rustup、crates.io 及链 RPC。编译资源有限时使用 `sudo bash scripts/04-build.sh 1`。`install` 可重试：已生成的配置不会覆盖；初始化标记允许数据库创建或密码输入中断后继续。已有数据库用户时输入其当前密码并验证连接，不重置密码；已有数据库也可复用，不改变 owner 或已有管理员密码。密码中的特殊字符会做 URL 编码。缺少原密码时停止，不自动修改数据库凭据。
 
 ## HTTPS 与网络
 
